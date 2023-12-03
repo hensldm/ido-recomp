@@ -364,6 +364,52 @@ void redirect_path(char* out, const char* path, const char* from, const char* to
     }
 }
 
+typedef struct StdinFile {
+    int fd;
+    char* name;
+} StdinFile;
+
+static const char STDIN_FILE_ARG[] = "--stdin=";
+static const char STDIN_FILE_TEMPLATE[] = "irtmpXXXXXX";
+
+static StdinFile stdin_file = {-1, NULL};
+
+static void init_stdin_file(char* arg) {
+    int n;
+    size_t file_arg_len = strlen(STDIN_FILE_ARG);
+    size_t suffix_len = strlen(arg) - file_arg_len + 1; // Add 1 for .
+    size_t path_len = strlen(STDIN_FILE_TEMPLATE) + suffix_len + 1;
+    stdin_file.name = malloc(path_len);
+
+    n = snprintf(stdin_file.name, path_len, "%s.%s", STDIN_FILE_TEMPLATE, arg + file_arg_len);
+
+    if ((n < 0) && ((size_t)n >= path_len)) {
+        fprintf(stderr, "Error: Unable to create filename %s.%s\n", STDIN_FILE_TEMPLATE, arg + file_arg_len);
+        exit(1);
+    }
+
+    stdin_file.fd = mkstemps(stdin_file.name, suffix_len);
+    fprintf(stderr, "stdin_file.name %s\n", stdin_file.name);
+
+    void* content[1024];
+    while((n = read(STDIN_FILENO, content, 1024)) > 0) {
+        if(write(stdin_file.fd, content, n) < 0) {
+            fprintf(stderr, "Error: Unable to write to %s\n", stdin_file.name);
+        };
+    }
+
+}
+
+static void destroy_stdin_file(void) {
+    if (stdin_file.fd > -1) {
+        close(stdin_file.fd);
+    }
+    if (stdin_file.name != NULL) {
+        unlink(stdin_file.name);
+        free(stdin_file.name);
+    }
+}
+
 typedef struct GlobalArgs {
     int argc;
     char** argv;
@@ -430,6 +476,7 @@ void final_cleanup(uint8_t* mem) {
     mem += MEM_REGION_START;
     memory_unmap(mem, MEM_REGION_SIZE);
     destroy_global_args();
+    destroy_stdin_file();
 }
 
 void print_version_info(void);
@@ -443,6 +490,10 @@ int main(int argc, char* argv[]) {
         if (strcmp(argv[i], "--version") == 0) {
             print_version_info();
             return 0;
+        }
+        if(strncmp(argv[i], STDIN_FILE_ARG, strlen(STDIN_FILE_ARG)) == 0) {
+            init_stdin_file(argv[i]);
+            argv[i] = stdin_file.name;
         }
     }
 
